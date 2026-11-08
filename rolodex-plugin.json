@@ -8,5 +8,6 @@
   "settings": [
     { "key": "auto-group", "label": "Automatic grouping", "type": "boolean" },
     { "key": "paper", "label": "Paper size", "type": "text" }
-  ]
+  ],
+  "rolodex": ">=0.1.0 <1.0.0"
 }
