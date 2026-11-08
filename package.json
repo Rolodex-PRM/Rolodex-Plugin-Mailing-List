@@ -1,0 +1,10 @@
+{
+  "name": "rolodex-plugin-mailing-lists",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node src/build.mjs",
+    "test": "node --test test/domain.test.mjs test/page.test.mjs",
+    "preview": "node dev/preview-server.mjs"
+  }
+}
