@@ -13,7 +13,11 @@ import {
   formatSalutation,
   householdConfidence,
   interpret,
+  listAccess,
+  listAudience,
   listMembership,
+  markAddressBad,
+  memberChange,
   matchAddresses,
   memberIdentity,
   mergeHouseholds,
@@ -22,8 +26,10 @@ import {
   planHouseholds,
   prepareCampaign,
   quietHouseholds,
+  shareHouseholdAddress,
   splitHousehold,
   syncSnapshots,
+  takeContactAddresses,
   withAccess,
 } from '../src/domain.mjs'
 import { bytesToBase64, labelPdf, recipientCsv, recipientXlsx, templateById } from '../src/export.mjs'
@@ -350,7 +356,11 @@ test('a shared list is editable by another member and a private list stays with 
   assert.equal(canSeeShared(edited, grace.id), true)
   assert.equal(canSeeShared(edited, ada.id), true)
   assert.deepEqual(editorNames(edited), ['Grace Hopper', 'Ada Lovelace'])
+  assert.deepEqual(listAccess(edited).map((row) => `${row.role}:${row.name}`), ['co-owner:Ada Lovelace', 'editor:Grace Hopper'])
+  const viewed = { ...edited, access: [{ id: 'alan', name: 'Alan Turing', role: 'viewer' }] }
+  assert.deepEqual(listAccess(viewed).map((row) => `${row.role}:${row.name}`), ['co-owner:Ada Lovelace', 'editor:Grace Hopper', 'viewer:Alan Turing'])
   const mine = withAccess(edited, ada, 'private')
+  assert.deepEqual(listAccess(mine).map((row) => row.name), ['Ada Lovelace'])
   assert.equal(canSeeShared(mine, ada.id), true)
   assert.equal(canSeeShared(mine, grace.id), false)
   assert.equal(canSeeShared({ name: 'Older list' }, grace.id), true)
@@ -359,4 +369,92 @@ test('a shared list is editable by another member and a private list stays with 
   assert.equal(canSeeCampaign(campaign, [shared], grace.id), true)
   assert.equal(campaignSharing({ ...campaign, sharing: 'workspace' }, [mine]), 'private')
   assert.equal(campaignSharing({ ...campaign, sharing: 'private' }, [shared]), 'private')
+})
+
+test('salutations offer titled, household, and custom formats', () => {
+  const household = { name: 'Smith', salutationFormat: 'The {household} Household' }
+  assert.equal(formatSalutation('mr-mrs', [john, jane], household).salutation, 'Mr. and Mrs. Smith')
+  assert.equal(formatSalutation('household', [john, jane, sam], household).salutation, 'The Smith Household')
+  assert.equal(formatSalutation('custom', [john, jane], household).salutation, 'The Smith Household')
+  assert.equal(formatSalutation('preferred', [john, jane], { salutationStyle: 'mr-mrs' }).salutation, 'Mr. and Mrs. Smith')
+})
+
+test('a list can mix chosen people with rules and remember who was removed', () => {
+  const list = {
+    id: 'cards',
+    archived: false,
+    recipientMode: 'individual',
+    members: [{ type: 'contact', id: priyaId, status: 'included' }, { type: 'contact', id: johnId, status: 'excluded' }],
+    rules: { version: 1, match: 'all', conditions: [{ field: 'tag', op: 'is', value: 'Family' }], exclusions: [] },
+  }
+  const world = { contacts: [john, jane, sam, priya], households: [], recipients: [], campaigns: [] }
+  const members = listMembership(list, world)
+  const ids = members.contacts.map((contact) => contact.id).sort()
+  assert.deepEqual(ids, [janeId, priyaId, samId].sort())
+  assert.deepEqual(listAudience(list, world), { households: 0, people: 3 })
+  const homeGroup = { id: 'h', archived: false, members: [{ contactId: johnId, validUntil: '' }, { contactId: janeId, validUntil: '' }] }
+  const mailed = { archived: false, members: [{ type: 'household', id: 'h', status: 'included' }] }
+  assert.deepEqual(listAudience(mailed, { contacts: [john, jane], households: [homeGroup] }), { households: 1, people: 2 })
+  const change = memberChange(
+    [{ type: 'contact', id: priyaId, status: 'included' }],
+    [{ type: 'contact', id: priyaId, status: 'included' }, { type: 'contact', id: johnId, status: 'excluded' }, { type: 'household', id: 'h', status: 'included' }],
+  )
+  assert.deepEqual(change.added, ['household:h'])
+  assert.deepEqual(change.removed, [])
+  const household = { id: 'h', addresses: [{ id: 'a', line1: '100 Oak Street', validationStatus: 'unverified', current: true }] }
+  const marked = markAddressBad(household, 'a', '2026-11-08T00:00:00.000Z')
+  assert.equal(marked.addresses[0].validationStatus, 'bad')
+})
+
+test('a household takes its address from its contacts', () => {
+  const household = {
+    id: 'hhhhhhhh-hhhh-4hhh-8hhh-hhhhhhhhhhhh',
+    name: 'Priya Shah',
+    addresses: [],
+    primaryAddressId: '',
+    members: [{ contactId: priyaId, primary: true, validUntil: '' }],
+    archived: false,
+  }
+  const filled = takeContactAddresses(household, [priya])
+  assert.equal(filled.addresses[0].line1, '50 Market Street')
+  assert.equal(filled.addresses[0].city, 'San Francisco')
+  assert.equal(filled.addresses[0].sourceContactId, priyaId)
+  assert.equal(takeContactAddresses(filled, [priya]), null)
+  const chris = person('66666666-6666-4666-8666-666666666666', 'Chris', 'Lee')
+  const empty = {
+    id: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
+    name: 'Chris Lee',
+    email: 'cards@example.com',
+    addresses: [],
+    members: [{ contactId: chris.id, validUntil: '' }],
+    archived: false,
+  }
+  assert.equal(takeContactAddresses(empty, [chris]), null)
+  const campaign = { sourceListIds: ['one'], recipientMode: 'household', deliveryMethod: 'digital', salutationStyle: 'names', excludes: [], includes: [] }
+  const list = { id: 'one', listType: 'static', archived: false, members: [{ type: 'household', id: empty.id, status: 'included' }] }
+  const prepared = prepareCampaign(campaign, { contacts: [chris], households: [empty], lists: [list], suppressions: [] })
+  assert.equal(prepared.recipients[0].email, 'cards@example.com')
+  assert.equal(prepared.recipients[0].missing.includes('address'), false)
+})
+
+test('editing a household address replaces it for every member', () => {
+  const household = {
+    id: 'hhhhhhhh-hhhh-4hhh-8hhh-hhhhhhhhhhhh',
+    name: 'The Smith Household',
+    primaryAddressId: 'addr-1',
+    addresses: [
+      { id: 'addr-1', line1: '100 Oak Street', city: 'Austin', current: true },
+      { id: 'addr-2', line1: '50 Market Street', city: 'San Francisco', current: true },
+    ],
+    members: [
+      { contactId: johnId, validUntil: '' },
+      { contactId: janeId, validUntil: '' },
+    ],
+  }
+  const next = shareHouseholdAddress(household, { line1: '9 New Road', city: 'Austin', region: 'TX', postalCode: '78702', country: 'USA' })
+  const current = next.addresses.filter((address) => !address.replacedAt)
+  assert.equal(current.length, 1)
+  assert.equal(current[0].line1, '9 New Road')
+  assert.equal(next.primaryAddressId, current[0].id)
+  assert.equal(next.addresses.filter((address) => address.replacedAt).length, 2)
 })

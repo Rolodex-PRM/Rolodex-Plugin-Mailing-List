@@ -1,7 +1,7 @@
 {
   "id": "mailing-lists",
   "name": "Mailing Lists",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Households, distribution lists, campaigns, and exports for physical and digital correspondence. Records stay in this plugin.",
   "entry": "index.html",
   "permissions": ["contacts:read", "data:own", "files:own", "ai:suggest", "profile:section"],
@@ -10,6 +10,6 @@
     { "key": "paper", "label": "Paper size", "type": "text" }
   ],
   "repo": "Rolodex-PRM/Rolodex-Plugin-Mailing-List",
-  "path": "mailing-lists",
+  "rolodex": ">=0.1.0 <1.0.0",
   "license": "AGPL-3.0-only"
 }

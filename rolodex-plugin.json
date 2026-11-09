@@ -1,9 +1,10 @@
 {
   "id": "mailing-lists",
   "name": "Mailing Lists",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Households, distribution lists, campaigns, and exports for physical and digital correspondence. Records stay in this plugin.",
   "entry": "index.html",
+  "rolodex": ">=0.1.0 <1.0.0",
   "permissions": ["contacts:read", "data:own", "files:own", "ai:suggest", "profile:section"],
   "settings": [
     { "key": "auto-group", "label": "Automatic grouping", "type": "boolean" },
