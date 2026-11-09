@@ -4,6 +4,10 @@ import { fileURLToPath } from 'node:url'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 
+function squeeze(source) {
+  return source.split('\n').map((line) => line.replace(/^[ \t]+/, '')).join('\n')
+}
+
 function strip(source) {
   const names = []
   const body = source
@@ -19,7 +23,8 @@ export function buildPage() {
   const app = readFileSync(path.join(root, 'src', 'app.js'), 'utf8')
   const css = readFileSync(path.join(root, 'src', 'app.css'), 'utf8')
   const names = [...domain.names, ...exporter.names]
-  for (const source of [domain.body, exporter.body, app, css]) {
+  const sources = [domain.body, exporter.body, app, css].map(squeeze)
+  for (const source of sources) {
     if (/<\/(script|style)/i.test(source)) throw new Error('Plugin source cannot close the script or style tag')
   }
   const html = `<!DOCTYPE html>
@@ -29,18 +34,18 @@ export function buildPage() {
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Mailing Lists</title>
 <style>
-${css}
+${sources[3]}
 </style>
 </head>
 <body>
 <div id="app"><p>Loading mailing lists…</p></div>
 <script>
 window.Mailing = (function () {
-${domain.body}
-${exporter.body}
+${sources[0]}
+${sources[1]}
 return { ${names.join(', ')} }
 })()
-${app}
+${sources[2]}
 </script>
 </body>
 </html>

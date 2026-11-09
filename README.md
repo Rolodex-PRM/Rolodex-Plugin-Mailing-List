@@ -15,7 +15,7 @@ To list it for other servers, add `registry-entry.json` to the Rolodex registry 
 Permissions:
 
 - `contacts:read` reads names, email, phone, tags, addresses, and relationship types.
-- `data:own` stores this plugin's records once for the workspace. Every member who can open the plugin reads the same households, shared lists, and shared campaigns. An editor can change them. A list or campaign can be kept private; other members then do not see it in this page.
+- `data:own` stores this plugin's records once for the workspace. Households are visible to every member. New lists and campaigns are private to the person who created them until that person shares them. A shared list can be edited by other members.
 - `files:own` stores CSV, spreadsheet, and PDF exports.
 - `ai:suggest` asks the workspace AI add-on for text and writes nothing.
 - `profile:section` shows the page on a contact.
@@ -29,7 +29,8 @@ Administrator settings:
 
 - Group people into households. A shared residential address is only a suggestion. Grouping happens automatically when the address, surname, and a family relationship agree, and only when automatic grouping is on. You can dismiss a suggestion, undo a grouping, merge, or split.
 - Keep more than one address on a household. Replacing an address keeps the previous one.
-- Build static lists of people and households, or dynamic lists from tags, place, email, address, dates, household membership, and earlier campaigns. New lists are shared with the workspace so other members can edit the same recipients. Use Keep this private on a list or campaign when it should stay with you.
+- Build lists from people you add and from rules such as tags, place, email, address, dates, household membership, and earlier campaigns. Removing someone keeps them off the list even when a rule still matches. Each add and removal is kept as a version you can restore.
+- New lists and campaigns are private. Share a list or campaign when other members of the workspace should work on it.
 - Create a campaign from one or more lists. Choose individual, household, or mixed recipients, and physical, digital, or both.
 - Preview duplicates and missing addresses or emails before approval. Approval saves a recipient snapshot. Later changes to a household address do not rewrite that snapshot. A completed campaign can be corrected only with a reason, which is kept in the audit log.
 - Export CSV, XLSX, Avery-style PDF labels, and envelopes from the snapshot.

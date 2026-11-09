@@ -47,11 +47,13 @@ export const CAMPAIGN_TYPES = [
 ]
 
 export const SALUTATION_STYLES = [
-  ['preferred', 'Preferred salutation'],
-  ['names', 'Individual names'],
-  ['family', 'The family'],
+  ['preferred', 'Household choice'],
+  ['mr-mrs', 'Mr. and Mrs.'],
+  ['names', 'Names'],
   ['household', 'The household'],
+  ['family', 'The family'],
   ['formal', 'Full names'],
+  ['custom', 'Custom format'],
 ]
 
 export const DELIVERY_STATUSES = {
@@ -150,6 +152,35 @@ export function editorNames(record) {
   }
   if (record?.ownerName && !names.includes(record.ownerName)) names.push(record.ownerName)
   return names
+}
+
+export function listAccess(record) {
+  const people = []
+  const seen = new Set()
+  const push = (id, name, role) => {
+    const key = id || name
+    if (!key || seen.has(key)) return
+    seen.add(key)
+    people.push({ id: id || key, name: name || 'Someone', role })
+  }
+  if (record?.ownerId || record?.ownerName) push(record.ownerId, record.ownerName || 'Co-owner', 'co-owner')
+  for (const grant of record?.access || []) {
+    if (grant?.role === 'co-owner' || grant?.role === 'editor' || grant?.role === 'viewer') push(grant.id, grant.name, grant.role)
+  }
+  if (record?.sharing === 'workspace') {
+    for (const editor of record?.editors || []) push(editor.id, editor.name, 'editor')
+  }
+  const rank = { 'co-owner': 0, editor: 1, viewer: 2 }
+  return people.sort((a, b) => (rank[a.role] ?? 3) - (rank[b.role] ?? 3))
+}
+
+export function listAudience(list, world) {
+  const members = listMembership(list, world)
+  const people = new Set((members.contacts || []).map((contact) => contact.id))
+  for (const home of members.households || []) {
+    for (const member of currentMembers(home)) if (member.contactId) people.add(member.contactId)
+  }
+  return { households: (members.households || []).length, people: people.size }
 }
 
 function hashId(prefix, parts) {
@@ -444,12 +475,40 @@ export function personName(contact) {
 }
 
 export function formatSalutation(style, contacts, household) {
+  const requested = style === 'preferred' && household?.salutationStyle ? household.salutationStyle : (style || 'names')
+  return renderSalutation(requested, contacts, household)
+}
+
+function majorityLast(people) {
+  const tally = new Map()
+  for (const person of people) if (person.last) tally.set(person.last, (tally.get(person.last) || 0) + 1)
+  let last = ''
+  let count = 0
+  for (const [value, seen] of tally) if (seen > count) { last = value; count = seen }
+  return last
+}
+
+function renderSalutation(style, contacts, household) {
   const people = (contacts || []).map(personName)
   const members = people.map((person) => person.full)
   const preferred = String(household?.salutation || '').trim()
+  const last = majorityLast(people)
   if (!people.length) return { salutation: preferred || household?.name || 'Unnamed', members }
-  if (style === 'preferred' && preferred) return { salutation: preferred, members }
-  if (style === 'household') return { salutation: preferred || householdTitle(contacts), members }
+  if ((style === 'preferred' || !style) && preferred) return { salutation: preferred, members }
+  if (style === 'preferred' || !style) return renderSalutation('names', contacts, household)
+  if (style === 'mr-mrs') return { salutation: last ? `Mr. and Mrs. ${last}` : (preferred || 'Mr. and Mrs.'), members }
+  if (style === 'household') return { salutation: last ? `The ${last} Household` : (household?.name || preferred || 'The Household'), members }
+  if (style === 'custom') {
+    const template = String(household?.salutationFormat || preferred || '{names}').trim() || '{names}'
+    const names = renderSalutation('names', contacts, household).salutation
+    const titled = last ? `Mr. and Mrs. ${last}` : 'Mr. and Mrs.'
+    const text = template
+      .replaceAll('{household}', household?.name || '')
+      .replaceAll('{last}', last)
+      .replaceAll('{names}', names)
+      .replaceAll('{mr-mrs}', titled)
+    return { salutation: text || names, members }
+  }
   if (style === 'family') {
     const tally = new Map()
     for (const person of people) if (person.last) tally.set(person.last, (tally.get(person.last) || 0) + 1)
@@ -526,6 +585,40 @@ export function currentAddresses(household) {
 export function primaryAddress(household) {
   const current = currentAddresses(household)
   return current.find((address) => address.id === household?.primaryAddressId) || current[0] || null
+}
+
+export function takeContactAddresses(household, contacts) {
+  const current = currentAddresses(household).filter((address) => addressKey(address))
+  if (current.length) return null
+  const byId = new Map((contacts || []).map((person) => [person.id, person]))
+  const seen = new Set()
+  const rows = []
+  for (const member of currentMembers(household)) {
+    const person = byId.get(member.contactId)
+    if (!person) continue
+    for (const address of residentialAddresses(person)) {
+      const key = addressKey(address)
+      if (!key || seen.has(key)) continue
+      seen.add(key)
+      rows.push(normalizeStoredAddress(address, { sourceContactId: person.id, type: 'residential' }))
+    }
+  }
+  if (!rows.length) return null
+  const copy = clone(household)
+  copy.addresses = [...(copy.addresses || []).filter((address) => address.replacedAt), ...rows]
+  copy.primaryAddressId = rows[0].id
+  return copy
+}
+
+export function shareHouseholdAddress(household, draft) {
+  const copy = clone(household)
+  const at = nowIso()
+  copy.addresses = (copy.addresses || []).map((address) => (address.replacedAt ? address : { ...address, current: false, replacedAt: at }))
+  const stored = normalizeStoredAddress({ ...draft, id: '', validationStatus: 'unverified', lastVerifiedAt: '' }, { type: draft?.type || 'residential' })
+  copy.addresses.push(stored)
+  copy.primaryAddressId = stored.id
+  copy.updatedAt = at
+  return copy
 }
 
 export function formatAddress(address) {
@@ -688,13 +781,17 @@ export function evaluateDynamicList(list, world) {
 
 export function listMembership(list, world) {
   if (list.archived) return { contacts: [], households: [] }
-  if (list.listType === 'dynamic') return evaluateDynamicList(list, world)
-  const contacts = []
-  const households = []
   const byContact = new Map((world.contacts || []).map((contact) => [contact.id, contact]))
   const byHouse = new Map((world.households || []).map((home) => [home.id, home]))
+  const contacts = []
+  const households = []
+  const excluded = new Set()
   for (const member of list.members || []) {
-    if (member.status === 'excluded') continue
+    const key = `${member.type}:${member.id}`
+    if (member.status === 'excluded') {
+      excluded.add(key)
+      continue
+    }
     if (member.type === 'household') {
       const home = byHouse.get(member.id)
       if (home && !home.archived) households.push(home)
@@ -703,7 +800,41 @@ export function listMembership(list, world) {
       if (contact) contacts.push(contact)
     }
   }
+  const rules = list.rules || emptyRules()
+  if (!rules.conditions?.length) return { contacts, households, problem: '' }
+  const dynamic = evaluateDynamicList(list, world)
+  if (dynamic.problem) return { contacts, households, problem: dynamic.problem }
+  for (const contact of dynamic.contacts || []) {
+    if (excluded.has(`contact:${contact.id}`) || contacts.some((row) => row.id === contact.id)) continue
+    contacts.push(contact)
+  }
+  for (const home of dynamic.households || []) {
+    if (excluded.has(`household:${home.id}`) || households.some((row) => row.id === home.id)) continue
+    households.push(home)
+  }
   return { contacts, households, problem: '' }
+}
+
+export function memberChange(before, after) {
+  const active = (rows) => new Set((rows || []).filter((member) => member.status !== 'excluded').map((member) => `${member.type}:${member.id}`))
+  const previous = active(before)
+  const next = active(after)
+  return {
+    added: [...next].filter((key) => !previous.has(key)),
+    removed: [...previous].filter((key) => !next.has(key)),
+  }
+}
+
+export function markAddressBad(household, addressId, at = nowIso()) {
+  const copy = clone(household)
+  let found = false
+  copy.addresses = (copy.addresses || []).map((address) => {
+    if (address.id !== addressId) return address
+    found = true
+    return { ...address, validationStatus: 'bad', lastVerifiedAt: at }
+  })
+  if (found) copy.updatedAt = at
+  return copy
 }
 
 function suppressionSet(rows) {
@@ -803,9 +934,10 @@ function draftRecipient(group, campaign, contacts, households, world) {
     const home = households.get(group.id)
     const members = currentMembers(home).slice().sort((a, b) => a.displayOrder - b.displayOrder)
     const people = members.map((member) => contacts.get(member.contactId)).filter(Boolean)
-    const formatted = formatSalutation(style === 'formal' ? 'formal' : style, people, home)
+    const named = style === 'custom' ? { ...home, salutationFormat: campaign.salutationFormat || home?.salutationFormat || '' } : home
+    const formatted = formatSalutation(style === 'formal' ? 'formal' : style, people, named)
     const address = chosenAddress(home, campaign)
-    const email = campaign.emailChoices?.[group.id] || people.map(primaryEmail).find(Boolean) || ''
+    const email = campaign.emailChoices?.[group.id] || people.map(primaryEmail).find(Boolean) || String(home?.email || '').trim()
     return {
       key: `household:${group.id}`,
       recipientType: 'household',
@@ -820,6 +952,7 @@ function draftRecipient(group, campaign, contacts, households, world) {
       sourceListIds: group.listIds,
       missing: [],
       suppressed: false,
+      notes: campaign.recipientNotes?.[`household:${group.id}`] || '',
     }
   }
   const contact = contacts.get(group.id) || { id: group.id, displayName: 'Unknown contact' }
@@ -841,6 +974,7 @@ function draftRecipient(group, campaign, contacts, households, world) {
     sourceListIds: group.listIds,
     missing: [],
     suppressed: false,
+    notes: campaign.recipientNotes?.[`contact:${group.id}`] || '',
   }
 }
 
@@ -940,7 +1074,7 @@ export function buildSnapshots(campaignId, prepared, at = nowIso()) {
       exportedAt: '',
       sentAt: '',
       deliveredAt: '',
-      notes: '',
+      notes: row.notes || '',
       excluded: Boolean(row.missing?.length),
       missing: clone(row.missing || []),
       locked: false,
